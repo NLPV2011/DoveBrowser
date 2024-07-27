@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dove Browser</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #controls {
+            display: flex;
+            background-color: #f1f1f1;
+            padding: 10px;
+            height: 20px;
+        }
+        #tabs {
+            display: flex;
+            background-color: #e1e1e1;
+            padding: 5px;
+            height: 25px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        .tab {
+            padding: 5px 10px;
+            margin-right: 5px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+        .tab.active {
+            background-color: #fff;
+        }
+        #navigation {
+            display: flex;
+            padding: 5px;
+            background-color: #f9f9f9;
+            align-items: center;
+        }
+        #urlBar {
+            flex-grow: 1;
+            margin: 0 10px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="newTab">New Tab</button>
+    </div>
+    <div id="tabs"></div>
+    <div id="navigation">
+        <button id="backBtn">Back</button>
+        <button id="forwardBtn">Forward</button>
+        <button id="refreshBtn">Refresh</button>
+        <button id="homeBtn">Home</button>
+        <input type="text" id="urlBar">
+        <button id="goBtn">Go</button>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        document.getElementById('newTab').addEventListener('click', () => {
+            ipcRenderer.send('new-tab', 'https://www.google.com');
+        });
+
+        document.getElementById('backBtn').addEventListener('click', () => {
+            ipcRenderer.send('navigate', 'back');
+        });
+
+        document.getElementById('forwardBtn').addEventListener('click', () => {
+            ipcRenderer.send('navigate', 'forward');
+        });
+
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            ipcRenderer.send('navigate', 'refresh');
+        });
+
+        document.getElementById('homeBtn').addEventListener('click', () => {
+            ipcRenderer.send('navigate', 'home');
+        });
+
+        document.getElementById('goBtn').addEventListener('click', () => {
+            const url = document.getElementById('urlBar').value;
+            ipcRenderer.send('navigate', 'go', url);
+        });
+
+        document.getElementById('urlBar').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const url = document.getElementById('urlBar').value;
+                ipcRenderer.send('navigate', 'go', url);
+            }
+        });
+
+        ipcRenderer.on('update-tabs', (event, tabUrls) => {
+            const tabsContainer = document.getElementById('tabs');
+            tabsContainer.innerHTML = '';
+            tabUrls.forEach((url, index) => {
+                const tab = document.createElement('div');
+                tab.className = 'tab';
+                tab.textContent = url;
+                tab.onclick = () => ipcRenderer.send('switch-tab', index);
+                tab.ondblclick = () => ipcRenderer.send('close-tab', index);
+                tabsContainer.appendChild(tab);
+            });
+        });
+
+        ipcRenderer.on('update-navigation', (event, data) => {
+            document.getElementById('backBtn').disabled = !data.canGoBack;
+            document.getElementById('forwardBtn').disabled = !data.canGoForward;
+            document.getElementById('urlBar').value = data.url;
+        });
+
+        window.addEventListener('resize', () => {
+            ipcRenderer.send('window-resized', window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
