@@ -10,6 +10,7 @@ function createWindow() {
     width: 1024,
     height: 768,
     title: 'Dove',
+    frame: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -22,7 +23,29 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     createTab('https://www.google.com');
   });
+
+  mainWindow.on('resize', updateTabBounds);
+  mainWindow.on('maximize', updateTabBounds);
+  mainWindow.on('unmaximize', updateTabBounds);
 }
+
+ipcMain.on('window-control', (event, action) => {
+  switch (action) {
+    case 'minimize':
+      mainWindow.minimize();
+      break;
+    case 'maximize':
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize();
+      } else {
+        mainWindow.maximize();
+      }
+      break;
+    case 'close':
+      mainWindow.close();
+      break;
+  }
+});
 
 function createTab(url) {
   const view = new BrowserView({
@@ -32,7 +55,10 @@ function createTab(url) {
     }
   });
 
-  mainWindow.addBrowserView(view);
+  tabs.push({ view, title: 'New Tab' });
+  currentTabIndex = tabs.length - 1;
+
+  mainWindow.setBrowserView(view);
   updateTabBounds();
   view.webContents.loadURL(url);
 
@@ -54,84 +80,81 @@ function createTab(url) {
     });
   });
 
-  tabs.push(view);
-  currentTabIndex = tabs.length - 1;
+  view.webContents.on('page-title-updated', (event, title) => {
+    tabs[currentTabIndex].title = title;
+    updateTabs();
+  });
+
   updateTabs();
 }
 
 function updateTabBounds() {
   const bounds = mainWindow.getContentBounds();
-  const controlsHeight = 40; // Chiều cao của thanh điều khiển
-  const tabsHeight = 35; // Chiều cao của thanh tab
-  const navHeight = 40; // Chiều cao của thanh điều hướng
-  const totalTopHeight = controlsHeight + tabsHeight + navHeight;
+  const tabsHeight = 48; // Height of title bar including tabs and window controls
+  const navHeight = 48; // Height of navigation bar
+  const spacerHeight = 10; // Height of spacer
+  const totalTopHeight = tabsHeight + navHeight + spacerHeight;
 
   tabs.forEach((tab, index) => {
     if (index === currentTabIndex) {
-      tab.setBounds({ 
-        x: 0, 
-        y: totalTopHeight, 
-        width: bounds.width, 
-        height: bounds.height - totalTopHeight 
+      tab.view.setBounds({
+        x: 0,
+        y: totalTopHeight,
+        width: bounds.width,
+        height: bounds.height - totalTopHeight
       });
+      tab.view.setAutoResize({ width: true, height: true });
     } else {
-      tab.setBounds({ x: 0, y: totalTopHeight, width: 0, height: 0 });
+      tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     }
   });
 }
 
 function updateTabs() {
-  updateTabBounds();
-  mainWindow.webContents.send('update-tabs', tabs.map(tab => tab.webContents.getURL()));
+  const tabTitles = tabs.map(tab => tab.title);
+  mainWindow.webContents.send('update-tabs', tabTitles, currentTabIndex);
 }
 
-app.whenReady().then(createWindow);
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+ipcMain.on('switch-tab', (event, index) => {
+  if (index < 0 || index >= tabs.length) return;
+  currentTabIndex = index;
+  mainWindow.setBrowserView(tabs[currentTabIndex].view);
+  updateTabBounds();
+  updateTabs();
 });
 
 ipcMain.on('new-tab', (event, url) => {
   createTab(url);
 });
 
-ipcMain.on('switch-tab', (event, index) => {
-  currentTabIndex = index;
-  updateTabs();
-  const currentTab = tabs[currentTabIndex];
-  mainWindow.webContents.send('update-navigation', {
-    canGoBack: currentTab.webContents.canGoBack(),
-    canGoForward: currentTab.webContents.canGoForward(),
-    isLoading: false,
-    url: currentTab.webContents.getURL()
-  });
-});
-
 ipcMain.on('close-tab', (event, index) => {
-  if (tabs.length > 1) {
-    mainWindow.removeBrowserView(tabs[index]);
-    tabs.splice(index, 1);
-    if (currentTabIndex >= tabs.length) currentTabIndex = tabs.length - 1;
-    updateTabs();
+  if (index < 0 || index >= tabs.length) return;
+  const tab = tabs[index].view;
+  tab.webContents.destroy();
+  tabs.splice(index, 1);
+  currentTabIndex = Math.min(currentTabIndex, tabs.length - 1);
+  if (tabs.length > 0) {
+    mainWindow.setBrowserView(tabs[currentTabIndex].view);
+  } else {
+    mainWindow.setBrowserView(null);
   }
-});
-
-ipcMain.on('window-resized', (event, width, height) => {
   updateTabBounds();
+  updateTabs();
 });
 
 ipcMain.on('navigate', (event, action, url) => {
-  const currentTab = tabs[currentTabIndex];
-  switch(action) {
+  const currentTab = tabs[currentTabIndex].view;
+  if (!currentTab) return;
+  switch (action) {
     case 'back':
-      if (currentTab.webContents.canGoBack()) currentTab.webContents.goBack();
+      if (currentTab.webContents.canGoBack()) {
+        currentTab.webContents.goBack();
+      }
       break;
     case 'forward':
-      if (currentTab.webContents.canGoForward()) currentTab.webContents.goForward();
+      if (currentTab.webContents.canGoForward()) {
+        currentTab.webContents.goForward();
+      }
       break;
     case 'refresh':
       currentTab.webContents.reload();
@@ -143,4 +166,26 @@ ipcMain.on('navigate', (event, action, url) => {
       currentTab.webContents.loadURL(url);
       break;
   }
+});
+
+ipcMain.on('open-settings', () => {
+  createTab(`file://${__dirname}/src/settings.html`);
+});
+
+app.whenReady().then(createWindow);
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
+});
+
+ipcMain.on('new-window', () => {
+  createWindow();
 });
